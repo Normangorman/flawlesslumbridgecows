@@ -30,7 +30,7 @@ import javax.swing.border.BevelBorder;
 import javax.swing.border.Border;
 import javax.swing.border.TitledBorder;
 
-@ScriptManifest(author="Normangorman", info="", name="Flawless Scripts - Lumbridge Cows", version=3.0, logo="")
+@ScriptManifest(author="Normangorman", info="", name="Flawless Scripts - Lumbridge Cows", version=3.0, logo="http://i.imgur.com/wzKQf3X.png")
 public class CowKillerScript extends Script {
     private final boolean DEBUG = true;
     private final String SCRIPT_TITLE = "Flawless Scripts - Lumbridge Cows";
@@ -503,7 +503,7 @@ public class CowKillerScript extends Script {
     private void do_idle() {
         if (!inCorrectField(myPosition())) {
             // Either I have died and am back in Lumbridge, or have just wandered out of the field.
-            if (myPosition().distance(CowConstants.LUMBRIDGE_RESPAWN_POSITION) < 10) {
+            if (inLumbridge()) {
                 death_count++;
                 currentCowField = getRandomCowField();
                 current_state = State.RUNNING_TO_COWS;
@@ -645,6 +645,14 @@ public class CowKillerScript extends Script {
             camera.toEntity(target);
         }
 
+        // Check for death:
+        if (inLumbridge()) {
+            death_count++;
+            currentCowField = getRandomCowField();
+            current_state = State.RUNNING_TO_COWS;
+            return;
+        }
+
         boolean am_i_attacking = myPlayer().getInteracting() == target;
         if (!target.exists() || !am_i_attacking) {
             log("Killed a cow.");
@@ -663,6 +671,14 @@ public class CowKillerScript extends Script {
     }
 
     private void do_looting() throws InterruptedException {
+        // Check for death:
+        if (inLumbridge()) {
+            death_count++;
+            currentCowField = getRandomCowField();
+            current_state = State.RUNNING_TO_COWS;
+            return;
+        }
+
         sleep(2000); // wait for loot to appear
         GroundItem bones = groundItems.closest("Bones");
 
@@ -758,6 +774,10 @@ public class CowKillerScript extends Script {
         else {
             return inEastField(p);
         }
+    }
+
+    private boolean inLumbridge() {
+        return myPosition().distance(CowConstants.LUMBRIDGE_RESPAWN_POSITION) < 10);
     }
 
     private boolean isGateOpen(RS2Object gate) {
