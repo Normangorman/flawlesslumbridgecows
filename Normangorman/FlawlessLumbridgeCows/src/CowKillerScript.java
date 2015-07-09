@@ -627,7 +627,7 @@ public class CowKillerScript extends Script {
         s += "Kill count: " + killCount + "\n";
         s += "XP gained: " + experienceTracker.getGainedXP(trainingSkill) + "\n";
         s += "Levels gained: " + experienceTracker.getGainedLevels(trainingSkill) + "\n";
-        s += "Level up in: " + experienceTracker.getTimeToLevel(trainingSkill) + "\n";
+        s += "Level up in: " + millisDurationToString(experienceTracker.getTimeToLevel(trainingSkill)) + "\n";
         s += "Skill level goal: " + trainingSkillGoal + "\n";
         s += "Bones buried: " + bonesBuriedCount + "\n";
         s += "Prayer XP gained: " + experienceTracker.getGainedXP(Skill.PRAYER) + "\n";

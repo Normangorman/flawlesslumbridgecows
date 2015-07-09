@@ -34,9 +34,17 @@ public class ConversationManager {
         this.usernameAliases = usernameAliases;
     }
 
+    public void enableEmail(EmailManager e) {
+        hasEmailEnabled = true;
+        emailManager = e;
+    }
+
     public void loop() {
         if (!isCurrentlyConversing) {
-            lookForConversationTarget();
+            // If no one is talking to us and the time of the next conversation has been reached, look for someone to talk to.
+            if (System.currentTimeMillis() >= nextConversationTime) {
+                lookForConversationTarget();
+            }
         }
         else {
             if (currentConversation.isFinished()) {
@@ -76,8 +84,31 @@ public class ConversationManager {
             script.keyboard.typeString(response);
         }
         else if (msg.getType() == Message.MessageType.PLAYER) {
-            if (isCurrentlyConversing && msg.getUsername().equals(currentConversation.getTargetPlayerName())) {
-                currentConversation.getMessageFromTarget(msg.getMessage());
+            if (isCurrentlyConversing) {
+                if (msg.getUsername().equals(currentConversation.getTargetPlayerName())) {
+                    currentConversation.getMessageFromTarget(msg.getMessage());
+                }
+            }
+            else {
+                for (String alias : usernameAliases) {
+                    if (msg.getMessage().contains(alias)) {
+                        // They are talking to us
+                        // Get the player object so a new conversation can be created.
+                        String senderName = msg.getUsername();
+                        Player sender = script.myPlayer(); // must be non-null for compilation
+                        for (Player p : script.players.getAll()) {
+                            if (p.getName().equals(senderName)) {
+                                sender = p;
+                                break;
+                            }
+                        }
+
+                        if (sender != script.myPlayer()) {
+                            startConversation(sender, Optional.of(msg.getMessage()));
+                            return;
+                        }
+                    }
+                }
             }
         }
     }
@@ -95,11 +126,6 @@ public class ConversationManager {
         return nextConversationTime;
     }
 
-    public void enableEmail(EmailManager e) {
-        hasEmailEnabled = true;
-        emailManager = e;
-    }
-
     private void updateNextConversationTime() {
         double nextConversationDelayMins = conversationBreakAverage + (randomGen.nextDouble() * 2 - 1) * conversationBreakDeviation;
         long nextConversationDelayMillis = (long)Math.floor(nextConversationDelayMins * 60 * 1000);
@@ -114,61 +140,23 @@ public class ConversationManager {
 
     // Returns true if a conversation was started, false if not.
     private boolean lookForConversationTarget() {
+        String myName = script.myPlayer().getName();
+        Position myPosition = script.myPosition();
 
-        // If someone is directly talking to us, then respond to them and engage in conversation.
-        java.util.List<Player> talkingPlayers =
+        // Get the nearest player (provided he is within 10 squares of us)
+        List<Player> nearbyPlayers =
                 script.players.getAll().stream().
-                        filter(p -> p.getHeadMessage() != null).
+                        filter(p -> p.getName() != myName && myPosition.distance(p.getPosition()) <= 10).
+                        sorted(Comparator.comparingInt(p -> myPosition.distance(p.getPosition()))).
                         collect(Collectors.toList());
 
-        boolean foundTargetPlayer = false;
-        Player targetPlayer = script.myPlayer(); // targetPlayer must be non-null for compilation to succeed.
-        // Check if anyone has mentioned one of our username aliases in a chat message.
-        for (Player p : talkingPlayers) {
-            String msg = p.getHeadMessage().toLowerCase(); // username aliases should all be lower case.
-            boolean refersToPlayer = false;
 
-            for (String alias : usernameAliases) {
-                if (msg.contains(alias)) {
-                    refersToPlayer = true;
-                    break;
-                }
-            }
+        if (nearbyPlayers.size() > 0) {
+            Player targetPlayer = nearbyPlayers.get(0);
 
-            if (refersToPlayer) {
-                foundTargetPlayer = true;
-                targetPlayer = p;
-                break;
-            }
-        }
-
-        if (foundTargetPlayer) {
-            script.log("Someone is talking to me! Initiating conversation with them.");
-            startConversation(targetPlayer, Optional.of(targetPlayer.getHeadMessage()));
+            script.log("Initiating a conversation with someone.");
+            startConversation(targetPlayer, Optional.empty());
             return true;
-        }
-
-
-        // If no one is talking to us and the time of the next conversation has been reached, look for someone to talk to.
-        if (System.currentTimeMillis() >= nextConversationTime) {
-            String myName = script.myPlayer().getName();
-            Position myPosition = script.myPosition();
-
-            // Get the nearest player (provided he is within 10 squares of us)
-            List<Player> nearbyPlayers =
-                    script.players.getAll().stream().
-                            filter(p -> p.getName() != myName && myPosition.distance(p.getPosition()) <= 10).
-                            sorted(Comparator.comparingInt(p -> myPosition.distance(p.getPosition()))).
-                            collect(Collectors.toList());
-
-
-            if (nearbyPlayers.size() > 0) {
-                targetPlayer = nearbyPlayers.get(0);
-
-                script.log("Initiating a conversation with someone.");
-                startConversation(targetPlayer, Optional.empty());
-                return true;
-            }
         }
 
         return false;
