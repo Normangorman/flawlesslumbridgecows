@@ -4,6 +4,7 @@
 
 import org.osbot.rs07.api.map.Position;
 import org.osbot.rs07.api.model.Player;
+import org.osbot.rs07.api.ui.Message;
 import org.osbot.rs07.script.Script;
 
 import java.util.Comparator;
@@ -15,7 +16,7 @@ import java.util.stream.Collectors;
 public class ConversationManager {
     private Script script;
 
-    private String[] usernameAliases = {"normangorman", "norman", "norm", "gorm", "gorman", "normy", "gormy"};
+    private String[] usernameAliases;
 
     public boolean isCurrentlyConversing = false;
     private RSConversation currentConversation;
@@ -51,6 +52,32 @@ public class ConversationManager {
             }
             else {
                 currentConversation.loop();
+            }
+        }
+    }
+
+    public void handleMessage(Message msg) {
+        // Will handle player or trade messages.
+
+        if (msg.getType() == Message.MessageType.RECEIVE_TRADE) {
+            script.log("Declining trade request.") ;
+            String userName = msg.getUsername();
+
+            String[] possibleResponses = new String[] {
+                    "No thanks. I don't want to trade.",
+                    "nty, don't want to trade",
+                    "don't want to trade thanks",
+                    "Sorry " + userName + ", I don't want to trade.",
+                    "I'd rather not trade at the minute " + userName + ".",
+                    userName + " I don't want to trade with you"
+            };
+
+            String response = possibleResponses[new Random().nextInt(possibleResponses.length)];
+            script.keyboard.typeString(response);
+        }
+        else if (msg.getType() == Message.MessageType.PLAYER) {
+            if (isCurrentlyConversing && msg.getUsername().equals(currentConversation.getTargetPlayerName())) {
+                currentConversation.getMessageFromTarget(msg.getMessage());
             }
         }
     }

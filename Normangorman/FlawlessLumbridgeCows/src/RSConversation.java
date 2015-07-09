@@ -1,5 +1,6 @@
 import org.osbot.rs07.api.model.Player;
 import org.osbot.rs07.api.ui.HeadMessage;
+import org.osbot.rs07.api.ui.Message;
 import org.osbot.rs07.script.Script;
 import com.google.code.chatterbotapi.*;
 
@@ -12,8 +13,10 @@ public class RSConversation {
 
     int targetPlayerIndex;
     String targetPlayerName;
-    String lastTargetMessage;
+    String latestMessageFromTarget;
+    boolean seenLatestMessage;
     long lastMessageTime;
+
     ChatterBot chatBot;
     ChatterBotSession currentChatSession;
 
@@ -27,7 +30,8 @@ public class RSConversation {
         this.script = script;
         targetPlayerIndex = targetPlayer.getIndex();
         targetPlayerName = targetPlayer.getName();
-        lastTargetMessage = "";
+        latestMessageFromTarget = "";
+        seenLatestMessage = true;
         chatLog = "";
 
         startedConversation = false;
@@ -44,7 +48,7 @@ public class RSConversation {
         catch (Exception e) {
             script.log("Error in creating chat session.");
             finishedConversation = true;
-            throw new RuntimeException(e);
+            script.log(e.getMessage());
         }
 
         if (!msg.isPresent()) { // we are starting the conversation
@@ -99,17 +103,17 @@ public class RSConversation {
         if (targetPlayer == null || targetPlayer.getPosition().distance(script.myPosition()) > 25) {
             finishedConversation = true;
         }
-        else {
-            List<HeadMessage> recentMessages = targetPlayer.getRecentMessages();
-
-            if (recentMessages.size() > 0) {
-                String lastMsg = recentMessages.get(recentMessages.size() - 1).getMessage();
-
-                if (lastMsg != lastTargetMessage) {
-                    respondToMessage(lastMsg);
-                }
-            }
+        else if (!seenLatestMessage) {
+            seenLatestMessage = true;
+            respondToMessage(latestMessageFromTarget);
         }
+    }
+
+    // Called by ConversationManager when a new message is received.
+    public void getMessageFromTarget(String msg) {
+        latestMessageFromTarget = msg;
+        lastMessageTime = System.currentTimeMillis();
+        seenLatestMessage = false;
     }
 
     private void sendMessage(String msg) {
@@ -119,10 +123,8 @@ public class RSConversation {
     }
 
     private void respondToMessage(String msg) {
-        lastMessageTime = System.currentTimeMillis();
-        lastTargetMessage = msg;
-        chatLog += targetPlayerName + ": " + msg + "\n";
         script.log("CONVERSATION - Got response: " + msg);
+        chatLog += targetPlayerName + ": " + msg + "\n";
 
         String response;
         try {
@@ -130,8 +132,7 @@ public class RSConversation {
         } catch (Exception e) {
             response = "";
             finishedConversation = true;
-            script.warn("CONVERSATION ERROR Getting response from CleverBot.");
-            throw new RuntimeException(e);
+            script.warn("CONVERSATION - Error getting response from CleverBot.");
         }
 
         sendMessage(response);

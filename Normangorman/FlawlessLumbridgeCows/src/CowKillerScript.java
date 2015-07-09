@@ -1,34 +1,24 @@
 /**
  * Created by Ben on 02/07/2015.
  */
-import org.osbot.rs07.api.Skills;
+import org.osbot.rs07.api.Chatbox;
 import org.osbot.rs07.api.map.Position;
-import org.osbot.rs07.api.model.GroundItem;
 import org.osbot.rs07.api.model.Item;
-import org.osbot.rs07.api.model.NPC;
-import org.osbot.rs07.api.model.RS2Object;
-import org.osbot.rs07.api.ui.EquipmentSlot;
+import org.osbot.rs07.api.ui.Message;
 import org.osbot.rs07.api.ui.Skill;
 import org.osbot.rs07.api.ui.Tab;
 import org.osbot.rs07.script.Script;
 import org.osbot.rs07.script.ScriptManifest;
-import org.osbot.rs07.utility.ConditionalSleep;
 
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOError;
-import java.io.IOException;
 import java.net.URL;
 import java.util.*;
-import java.util.List;
 
 import javax.swing.*;
 import javax.swing.border.BevelBorder;
 import javax.swing.border.Border;
-import javax.swing.border.TitledBorder;
 
 @ScriptManifest(author="Normangorman", info="", name="Flawless Scripts - Lumbridge Cows", version=3.0, logo="http://i.imgur.com/wzKQf3X.png")
 public class CowKillerScript extends Script {
@@ -53,34 +43,28 @@ public class CowKillerScript extends Script {
     public ConversationManager conversationManager;
 
     // Skills
-    private Skill statToTrain = Skill.STRENGTH;
-    private int statGoal = 99;
+    private Skill trainingSkill = Skill.STRENGTH;
+    private int trainingSkillGoal = 99;
 
     private boolean shouldBuryBones = false;
+    private int bonesBuriedCount = 0;
     private int prayerGoal = 99;
 
     // Script data:
     private Random randomGen = new Random();
     private long startTime = System.currentTimeMillis();
-    private NPC target;
-    private Position targetPosition;
-    private int kill_count = 0;
-    private int death_count = 0;
+    private int killCount = 0;
+    private int deathCount = 0;
     private CowConstants.CowField currentCowField;
 
-    private enum State {
-        INITIAL,
-        IDLE,
-        RUNNING_TO_COWS,
-        PASSING_GATE,
-        MOVING_TO_TARGET,
-        IN_COMBAT,
-        LOOTING,
-        BURYING_BONES
+    private State currentState = new InitialState(this);
+
+    public void changeState(State newState) {
+        log("Leaving '" + currentState.getDescription() + "' and entering '" + newState.getDescription() + "'");
+        currentState = newState;
     }
 
-    private State current_state = State.INITIAL;
-
+    @Override
     public void onStart() {
         log("Script is starting...");
 
@@ -98,10 +82,7 @@ public class CowKillerScript extends Script {
         titleFont = baseFont.deriveFont(Font.PLAIN, titleFontSize);
         smallFont = baseFont.deriveFont(Font.PLAIN, smallFontSize);
 
-        initSettings();
-    }
-
-    private void initSettings() {
+        // Settings GUI:
         JFrame frame = new JFrame("Script Settings");
         frame.addWindowListener(new WindowAdapter() {
             public void windowClosing(WindowEvent event) {
@@ -321,21 +302,21 @@ public class CowKillerScript extends Script {
             // Training
             String statToTrainString = (String) trainingStatBox.getSelectedItem();
             if (statToTrainString.equals("Attack")) {
-                statToTrain = Skill.ATTACK;
+                trainingSkill = Skill.ATTACK;
             } else if (statToTrainString.equals("Strength")) {
-                statToTrain = Skill.STRENGTH;
+                trainingSkill = Skill.STRENGTH;
             } else if (statToTrainString.equals("Defence")) {
-                statToTrain = Skill.DEFENCE;
+                trainingSkill = Skill.DEFENCE;
             }
 
             try {
-                statGoal = Integer.parseInt(trainingStatLevelGoalField.getText());
-                if (statGoal < 1 || statGoal > 99) { statGoal = 99; }
+                trainingSkillGoal = Integer.parseInt(trainingStatLevelGoalField.getText());
+                if (trainingSkillGoal < 1 || trainingSkillGoal > 99) { trainingSkillGoal = 99; }
             } catch (NumberFormatException e) {
-                statGoal = 99;
+                trainingSkillGoal = 99;
             }
 
-            log("Stat goal is " + statGoal + ". Script will stop upon reaching this level.");
+            log("Stat goal is " + trainingSkillGoal + ". Script will stop upon reaching this level.");
 
             shouldBuryBones = buryBonesCheckbox.isSelected();
             if (shouldBuryBones) {
@@ -368,7 +349,7 @@ public class CowKillerScript extends Script {
 
     @Override
     public int onLoop() throws InterruptedException {
-        if (!settings_configured) { return 5; }
+        if (!settings_configured) { return 100; }
 
         if (hasConversationsEnabled) {
             conversationManager.loop();
@@ -378,19 +359,19 @@ public class CowKillerScript extends Script {
             emailManager.loop();
         }
 
-        if (getSkills().getDynamic(statToTrain) >= statGoal) {
+        if (getSkills().getDynamic(trainingSkill) >= trainingSkillGoal) {
             log("Stat goal reached!");
 
             if (hasEmailEnabled) {
-                emailManager.sendEmail("Stat goal of " + statGoal + " " + statToTrain.toString() + " reached. Script stopping.");
+                emailManager.sendEmail("Stat goal of " + trainingSkillGoal + " " + trainingSkill.toString() + " reached. Script stopping.");
             }
 
             CowKillerScript.this.stop();
         }
 
         if (shouldBuryBones && getSkills().getDynamic(Skill.PRAYER) >= prayerGoal) {
-            shouldBuryBones = false;
             log("Prayer goal reached.");
+            shouldBuryBones = false;
             emailManager.sendEmail("Reached prayer goal of " + prayerGoal + ". Bones will no longer be buried.");
         }
 
@@ -404,68 +385,139 @@ public class CowKillerScript extends Script {
             getSettings().setRunning(true);
         }
 
-        switch(current_state) {
-            case INITIAL: // set up equipment, attack style etc. decide which state to enter first.
-                log("Beginning initial case.");
-                do_initial();
-                break;
-
-            case IDLE:
-                log("Beginning idle case.");
-                do_idle();
-                break;
-
-            case RUNNING_TO_COWS:
-                log("Beginning running to cows case.");
-                do_running_to_cows();
-                break;
-
-            case PASSING_GATE:
-                log("Beginning passing gate case.");
-                do_passing_gate();
-                break;
-
-            case MOVING_TO_TARGET:
-                log("Beginning moving to target case.");
-                do_moving_to_target();
-                break;
-
-            case IN_COMBAT:
-                log("Beginning attacking case.");
-                do_in_combat();
-                break;
-
-            case LOOTING:
-                log("Beginning looting case.");
-                do_looting();
-                break;
-
-            case BURYING_BONES:
-                log("Beginning burying bones case.");
-                do_burying_bones();
-                break;
-        }
-
+        currentState.loop();
         return random(300, 500);
     }
 
     @Override
     public void onPaint(java.awt.Graphics2D g2d) {
         super.onPaint(g2d);
+
+        if (!settings_configured) { return; }
+
         g2d.setColor(Color.YELLOW);
 
+        int baseX = 10;
+        int titleMaxX = 488;
+        int titleY = 30 + (int)(titleFontSize / 2);
+
+        int boxPadding = 2;
+        int lineSpacing = 2;
+        int boxSpacing = 5;
+        int boxWidth = 245;
+
+        int box1Y = titleY + 10;
+        int box1TextY = box1Y + boxPadding + smallFontSize;
+        int box1Lines = 1;
+        int box1Height = 2 * boxPadding + (box1Lines - 1) * lineSpacing + box1Lines * smallFontSize;
+
+        int box2Y = box1Y + box1Height + boxSpacing;
+        int box2TextY = box2Y + boxPadding + smallFontSize;
+        int box2Lines = 5;
+        int box2Height = 2 * boxPadding + (box2Lines - 1) * lineSpacing + box2Lines * smallFontSize;
+
+        int box3Y = box2Y + box2Height + boxSpacing;
+        int box3TextY = box3Y + boxPadding + smallFontSize;
+        int box3Lines = 2;
+        int box3Height = 2 * boxPadding + (box3Lines - 1) * lineSpacing + box3Lines * smallFontSize;
+
+        int box4Y = box3Y + box3Height + boxSpacing;
+        int box4TextY = box4Y + boxPadding + smallFontSize;
+        int box4Lines = 3;
+        int box4Height = 2 * boxPadding + (box4Lines - 1) * lineSpacing + box4Lines * smallFontSize;
+
+        Color textColor = g2d.getColor();
+        Color boxBorderColor = g2d.getColor();
+        Color boxFillColor = new Color(boxBorderColor.getRed(), boxBorderColor.getGreen(), boxBorderColor.getBlue(), 50);
+
+        g2d.setColor(textColor);
         g2d.setFont(titleFont);
-        g2d.drawString(SCRIPT_TITLE, 10, 30 + (int)(titleFontSize / 2));
+        g2d.drawString(SCRIPT_TITLE, baseX, titleY);
+
+        // Box 1: Current state and time elapsed
+        g2d.setColor(boxBorderColor);
+        g2d.drawRect(baseX, box1Y, titleMaxX - baseX, box1Height);
+        g2d.setColor(boxFillColor);
+        g2d.fillRect(baseX, box1Y, titleMaxX - baseX, box1Height);
 
         g2d.setFont(smallFont);
-        int y = 100;
-        for (String line : getProgressReport().split("\n")) {
-            g2d.drawString(line, 10, y);
-            y += smallFontSize;
+        g2d.setColor(textColor);
+        g2d.drawString("State: " + currentState.getDescription(), baseX + boxPadding, box1TextY);
+        long timeElapsed = System.currentTimeMillis() - startTime;
+        g2d.drawString("Run time: " + millisDurationToString(timeElapsed), (int)((titleMaxX + baseX)/2) + 15, box1TextY);
+
+        // Box 2: Training skill
+        int numLines = 5;
+        g2d.setColor(boxBorderColor);
+        g2d.drawRect(baseX, box2Y, boxWidth, box2Height);
+        g2d.setColor(boxFillColor);
+        g2d.fillRect(baseX, box2Y, boxWidth, box2Height);
+
+        g2d.setColor(textColor);
+        g2d.drawString("Training: " + trainingSkill.toString(), baseX, box2TextY);
+        g2d.drawString("Kill count: " + killCount, baseX + boxPadding, box2TextY + lineSpacing + smallFontSize);
+        g2d.drawString("XP gained: " + experienceTracker.getGainedXP(trainingSkill),  baseX + boxPadding, box2TextY + lineSpacing*2 + smallFontSize*2);
+        g2d.drawString("Levels gained: " + experienceTracker.getGainedLevels(trainingSkill), baseX + boxPadding, box2TextY + lineSpacing*3+ smallFontSize*3);
+        g2d.drawString("Level up in: " + millisDurationToString(experienceTracker.getTimeToLevel(trainingSkill)), baseX + boxPadding, box2TextY + lineSpacing*4+ smallFontSize*4);
+
+        // Box 3: Prayer
+        numLines = 2;
+        g2d.setColor(boxBorderColor);
+        g2d.drawRect(baseX, box3Y, boxWidth, box3Height);
+        g2d.setColor(boxFillColor);
+        g2d.fillRect(baseX, box3Y, boxWidth, box3Height);
+
+        g2d.setColor(textColor);
+        g2d.drawString("Bones buried: " + bonesBuriedCount, baseX + boxPadding, box3TextY);
+        g2d.drawString("Prayer XP gained: " + experienceTracker.getGainedXP(Skill.PRAYER), baseX + boxPadding, box3TextY + lineSpacing + smallFontSize);
+
+        // Box 4: Conversations & email
+        numLines = 3;
+        g2d.setColor(boxBorderColor);
+        g2d.drawRect(baseX, box4Y, boxWidth, box4Height);
+        g2d.setColor(boxFillColor);
+        g2d.fillRect(baseX, box4Y, boxWidth, box4Height);
+
+        g2d.setColor(textColor);
+        String conversationTarget = "-";
+        String timeTilNextConversation = "-";
+        if (hasConversationsEnabled) {
+            if (conversationManager.isCurrentlyConversing) {
+                conversationTarget = conversationManager.getCurrentConversationTargetName();
+            }
+            else {
+                timeTilNextConversation = millisDurationToString(conversationManager.getNextConversationTime() - System.currentTimeMillis());
+            }
         }
 
-        if (DEBUG && targetPosition != null) {
-            g2d.fillPolygon(targetPosition.getPolygon(bot));
+        String timeTilNextEmail = "-";
+        if (hasEmailEnabled) {
+            timeTilNextEmail = millisDurationToString(emailManager.getTimeTilNextEmail());
+        }
+        g2d.drawString("Chat target: " + conversationTarget, baseX + boxPadding, box4TextY);
+        g2d.drawString("Auto chat in: " + timeTilNextConversation, baseX + boxPadding, box4TextY + lineSpacing + smallFontSize);
+        g2d.drawString("Next email: " + timeTilNextEmail, baseX + boxPadding, box4TextY + lineSpacing*2 + smallFontSize*2);
+
+        currentState.paint(g2d);
+    }
+
+    @Override
+    public void onMessage(Message msg) {
+        if (!settings_configured || currentState == null) { return; }
+
+        if (msg.getType() == Message.MessageType.GAME && msg.getMessage().equals("Oh dear, you are dead!")) {
+            // Handle death!settings_configured || currentState  log("I died!");
+            randomlySwapCowFields();
+            equipItems();
+            deathCount++;
+            changeState(new RunningToCowsState(this));
+            return;
+        }
+        else if (msg.getType() == Message.MessageType.PLAYER || msg.getType() == Message.MessageType.RECEIVE_TRADE) {
+            conversationManager.handleMessage(msg);
+        }
+        else {
+            currentState.handleMessage(msg);
         }
     }
 
@@ -476,270 +528,39 @@ public class CowKillerScript extends Script {
         }
     }
 
-    private void do_initial() {
-        getExperienceTracker().start(statToTrain);
-
-        if (shouldBuryBones) {
-            getExperienceTracker().start(Skill.PRAYER);
-        }
-
-        equipItems();
-
-        if (CowConstants.WEST_FIELD_AREA.contains(myPosition())) {
-            currentCowField = CowConstants.CowField.WEST;
-            current_state = State.IDLE;
-        }
-        else if (CowConstants.EAST_FIELD_AREA.contains(myPosition())) {
-            currentCowField = CowConstants.CowField.EAST;
-            current_state = State.IDLE;
-        }
-        else {
-            // Assume we're in Lumbridge. Randomly select a field.
-            currentCowField = getRandomCowField();
-            current_state = State.RUNNING_TO_COWS;
-        }
+    // GETTERS / SETTERS:
+    public Skill getTrainingSkill() {
+        return trainingSkill;
     }
 
-    private void do_idle() {
-        if (!inCorrectField(myPosition())) {
-            // Either I have died and am back in Lumbridge, or have just wandered out of the field.
-            if (inLumbridge()) {
-                death_count++;
-                currentCowField = getRandomCowField();
-                current_state = State.RUNNING_TO_COWS;
-            }
-
-            current_state = State.RUNNING_TO_COWS;
-            return;
-        }
-
-        java.util.List<NPC> nearby_npcs = getNpcs().getAll();
-        log("Number of NPCs detected: " + Integer.toString(nearby_npcs.size()));
-
-        java.util.List<NPC> out_of_combat_cows = new java.util.ArrayList<>();
-        for (NPC npc : nearby_npcs) {
-            boolean is_cow = npc.getName().equals("Cow") || npc.getName().equals("Cow calf");
-            boolean out_of_combat = !npc.isUnderAttack();
-            boolean in_field = inCorrectField(npc.getPosition());
-
-            if (is_cow && out_of_combat && in_field) {
-                out_of_combat_cows.add(npc);
-            }
-        }
-
-        log("Number of out of combat cows detected: " + Integer.toString(out_of_combat_cows.size()));
-        if(out_of_combat_cows.size() == 0) {
-            log("ERROR: No out of combat cows found. This is probably a bug.");
-            return;
-        }
-
-        // Target the cow that is closest to the player.
-        NPC closest_cow = out_of_combat_cows.get(0);
-        int closest_distance = 10000;
-        for (NPC cow : out_of_combat_cows) {
-            int distance_to_player = myPosition().distance(cow.getPosition());
-            if (distance_to_player < closest_distance) {
-                closest_cow = cow;
-                closest_distance = distance_to_player;
-            }
-        }
-        log("Closest cow found.");
-
-        target = closest_cow;
-        targetPosition = closest_cow.getPosition();
-        if (!target.isVisible()) {
-            camera.toEntity(target);
-        }
-
-        log("Attacking closest cow.");
-        target.interact("Attack");
-        current_state = State.MOVING_TO_TARGET;
+    public int getTrainingSkillXP() {
+        return skills.getExperience(trainingSkill);
     }
 
-    private void do_running_to_cows() {
-        equipItems();
-
-        // Choose a random path to the current field and walk it.
-        Position[][] random_path_choices;
-        if (currentCowField == CowConstants.CowField.WEST) {
-            random_path_choices = CowConstants.PATHS_TO_WEST_FIELD;
-        }
-        else {
-            random_path_choices = CowConstants.PATHS_TO_EAST_FIELD;
-        }
-
-        Position[] random_path = random_path_choices[randomGen.nextInt(3)];
-        getLocalWalker().walkPath(random_path);
-        log("Finished walking path.");
-        current_state = State.PASSING_GATE;
+    public boolean getShouldBuryBones() {
+        return shouldBuryBones;
     }
 
-    private void do_passing_gate() throws InterruptedException {
-        log("Attempting to pass gate.");
-
-        RS2Object gate;
-        // Keep trying to open until it is open.
-        while(!isGateOpen(gate = getObjects().closest("Gate"))) {
-            gate.interact("Open");
-            sleep(random(100, 200));
-        }
-        log("Finished gate open sleep.");
-
-        // Walk into the field
-        if (currentCowField == CowConstants.CowField.WEST) {
-            log("Entering western field.");
-            getLocalWalker().walk(CowConstants.WEST_FIELD_INNER_POS);
-
-            if (inWestField(myPosition())) {
-                current_state = State.IDLE;
-            }
-        }
-        else {
-            log("Entering eastern field.");
-            getLocalWalker().walk(CowConstants.EAST_FIELD_INNER_POS);
-
-            if (inEastField(myPosition())) {
-                current_state = State.IDLE;
-            }
-        }
+    public CowConstants.CowField getCurrentCowField() {
+        return currentCowField;
     }
 
-    private void do_moving_to_target() {
-        assert(target != null);
-        if (!target.isVisible()) {
-            camera.toEntity(target);
-        }
-
-        // Sleep until the target is in combat. If it gets in combat with someone else - go back to idle, else go to in_combat.
-        new ConditionalSleep(5000, 100) {
-            @Override
-            public boolean condition() throws InterruptedException {
-                return !target.exists() || target.isUnderAttack() ;
-            }
-        }.sleep();
-
-        // Target should now be either non-existent or under attack.
-        if (!target.exists()) {
-            log("Combat aborted. Target no longer exists.");
-            target = null;
-            current_state = State.IDLE;
-            return;
-        }
-
-        boolean am_i_attacking = myPlayer().getInteracting() == target && myPlayer().isAnimating();
-        if (!am_i_attacking) {
-            log("Combat aborted. Someone else is probably attacking the target.");
-            target = null;
-            current_state = State.IDLE;
-            return;
-        }
-        else {
-            log("Entering combat with target.");
-            current_state = State.IN_COMBAT;
-        }
-
+    public void setCurrentCowField(CowConstants.CowField newField) {
+        currentCowField = newField;
     }
 
-    private void do_in_combat() throws InterruptedException {
-        if (!target.isVisible()) {
-            camera.toEntity(target);
-        }
-
-        // Check for death:
-        if (inLumbridge()) {
-            death_count++;
-            currentCowField = getRandomCowField();
-            current_state = State.RUNNING_TO_COWS;
-            return;
-        }
-
-        boolean am_i_attacking = myPlayer().getInteracting() == target;
-        if (!target.exists() || !am_i_attacking) {
-            log("Killed a cow.");
-
-            if (shouldBuryBones) {
-                current_state = State.LOOTING;
-            }
-            else {
-                current_state = State.IDLE;
-            }
-            kill_count++;
-        }
-        else { // We're still fighting
-            targetPosition = target.getPosition();
-        }
+    // UTILITY METHODS:
+    public void logCowKill() {
+        log("A cow was killed.");
+        killCount++;
     }
 
-    private void do_looting() throws InterruptedException {
-        // Check for death:
-        if (inLumbridge()) {
-            death_count++;
-            currentCowField = getRandomCowField();
-            current_state = State.RUNNING_TO_COWS;
-            return;
-        }
-
-        sleep(2000); // wait for loot to appear
-        GroundItem bones = groundItems.closest("Bones");
-
-        if (bones != null) {
-            log("Bones were found among the cow loot.");
-            if (!inventory.isFull()) {
-                log("Inventory not full. Attempting to pick bones up.");
-                long oldNumBones = inventory.getAmount("Bones");
-                long newNumBones;
-                boolean pickedUpBones = false;
-
-                for(int attempts=0; attempts < 5; attempts++) {
-                    bones.interact("Take");
-                    sleep(120);
-                    newNumBones = inventory.getAmount("Bones");
-
-                    if (newNumBones > oldNumBones) {
-                        pickedUpBones = true;
-                        break;
-                    }
-                }
-
-                if (pickedUpBones) {
-                    if (inventory.isFull()) {
-                        log("Picked up bones. Inventory now full. Transitioning to burying bones state.");
-                        current_state = State.BURYING_BONES;
-                    } else {
-                        log("Picked up bones. There is still space in my inventory.");
-                        current_state = State.IDLE;
-                    }
-                }
-                else {
-                    log("Attempt to pick up bones timed out.");
-                }
-            }
-            else {
-                log("Did not pick bones up because inventory full. Transitioning to burying bones state.");
-                current_state = State.BURYING_BONES;
-            }
-        }
-        else {
-            log("Didn't find any bones among the cow loot.");
-            current_state = State.IDLE;
-        }
+    public void logBonesBuried() {
+        log("Bones were buried.");
+        bonesBuriedCount++;
     }
 
-    private void do_burying_bones() {
-        if (inventory.contains("Bones")) {
-            log("There are still bones left in the inventory. Burying them.");
-            Item bones = inventory.getItem("Bones");
-            bones.interact("Bury");
-        }
-        else {
-            // Sometimes these are picked up accidentally.
-            inventory.dropAll("Raw beef");
-            inventory.dropAll("Cowhide");
-            current_state = State.IDLE;
-        }
-    }
-
-    private void equipItems() {
+    public void equipItems() {
         getTabs().open(Tab.INVENTORY);
         Item[] items = getInventory().getItems();
 
@@ -759,78 +580,78 @@ public class CowKillerScript extends Script {
         }
     }
 
-    private boolean inWestField(Position p) {
+    public void randomlySwapCowFields() {
+        boolean fieldChoice = randomGen.nextBoolean();
+
+        if (fieldChoice) {
+            currentCowField = CowConstants.CowField.WEST;
+        }
+        else {
+            currentCowField = CowConstants.CowField.EAST;
+        }
+    }
+
+    public boolean isWithinWestField(Position p) {
         return CowConstants.WEST_FIELD_AREA.contains(p);
     }
 
-    private boolean inEastField(Position p) {
+    public boolean isWithinEastField(Position p) {
         return CowConstants.EAST_FIELD_AREA.contains(p);
     }
 
-    private boolean inCorrectField(Position p) {
+    public boolean isWithinCurrentField(Position p) {
         if (currentCowField == CowConstants.CowField.WEST) {
-            return inWestField(p);
+            return isWithinWestField(p);
         }
         else {
-            return inEastField(p);
+            return isWithinEastField(p);
         }
     }
 
-    private boolean inLumbridge() {
-        return myPosition().distance(CowConstants.LUMBRIDGE_RESPAWN_POSITION) < 10);
-    }
+    public String millisDurationToString(long d) {
+        int totalTimeElapsedSecs = (int)(d / 1000);
+        int timeElapsedHours = (int)(Math.floor(totalTimeElapsedSecs / 3600));
+        int timeElapsedMins = (int)(Math.floor((totalTimeElapsedSecs - timeElapsedHours * 3600) / 60));
+        int timeElapsedSecs = totalTimeElapsedSecs - timeElapsedHours * 3600 - timeElapsedMins * 60;
 
-    private boolean isGateOpen(RS2Object gate) {
-         return !Arrays.asList(gate.getDefinition().getActions()).contains("Open");
+        return timeElapsedHours + "h " + timeElapsedMins + "m " + timeElapsedSecs + "s";
     }
 
     private String getProgressReport() {
         String s = "";
-        s += "State: " + current_state + "\n";
-        s += "Elapsed seconds: " + (int) ((System.currentTimeMillis() - startTime) / 1000) + "\n";
+        s += "State: " + currentState.getDescription() + "\n";
+        s += "Elapsed seconds: " + millisDurationToString(System.currentTimeMillis() - startTime) + "\n";
         s += "Current cow field: " + currentCowField.toString() + "\n";
-        s += "Kill count: " + kill_count + "\n";
-        s += "Death count: " + death_count + "\n";
-        s += "Skill being trained: " + statToTrain.toString() + "\n";
+        s += "Death count: " + deathCount + "\n";
+        s += "Training: " + trainingSkill.toString() + "\n";
+        s += "Kill count: " + killCount + "\n";
+        s += "XP gained: " + experienceTracker.getGainedXP(trainingSkill) + "\n";
+        s += "Levels gained: " + experienceTracker.getGainedLevels(trainingSkill) + "\n";
+        s += "Level up in: " + experienceTracker.getTimeToLevel(trainingSkill) + "\n";
+        s += "Skill level goal: " + trainingSkillGoal + "\n";
+        s += "Bones buried: " + bonesBuriedCount + "\n";
+        s += "Prayer XP gained: " + experienceTracker.getGainedXP(Skill.PRAYER) + "\n";
+        s += "Prayer level goal: " + prayerGoal + "\n";
 
-        s += "Skill level goal: " + statGoal + "\n";
-        s += "XP gained: " + getExperienceTracker().getGainedXP(statToTrain) + "\n";
-        s += "Levels gained: " + getExperienceTracker().getGainedLevels(statToTrain) + "\n";
-
-        s += "Burying bones: " + shouldBuryBones + "\n";
-        s += "Prayer XP gained: " + getExperienceTracker().getGainedXP(Skill.PRAYER) + "\n";
-
-        int time_to_level_up = (int)(getExperienceTracker().getTimeToLevel(statToTrain) / 1000);
-        int mins_to_level_up = (int)Math.floor(time_to_level_up / 60);
-        int sec_to_level_up = (int)(time_to_level_up % 60);
-        s += String.format("Time to level up: %d mins, %d secs.", mins_to_level_up, sec_to_level_up) + "\n";
-
-        if (hasEmailEnabled) {
-            s += "Time til next email update: " + emailManager.getTimeTilNextEmail() + "\n";
-        }
-
+        String chatTarget = "-";
+        String timeTilNextConversation = "-";
         if (hasConversationsEnabled) {
             if (conversationManager.isCurrentlyConversing) {
-                s += "Conversation target: " + conversationManager.getCurrentConversationTargetName() + "\n";
+                chatTarget = conversationManager.getCurrentConversationTargetName();
             } else {
-                s += "Conversation target: -\n";
-
-                int timeTilNextConversation = (int)Math.floor((conversationManager.getNextConversationTime() - System.currentTimeMillis()) / 1000);
-                s += "Time til next conversation: " + timeTilNextConversation + "\n";
+                timeTilNextConversation = millisDurationToString(conversationManager.getNextConversationTime() - System.currentTimeMillis());
             }
         }
+        s += "Chat target: " + chatTarget + "\n";
+        s += "Auto chat in: " + timeTilNextConversation + "\n";
+
+        String timeTilNextEmail = "-";
+        if (hasEmailEnabled) {
+            timeTilNextEmail = millisDurationToString(emailManager.getTimeTilNextEmail());
+        }
+
+        s += "Next email: " + timeTilNextEmail;
 
         return s;
-    }
-
-    private CowConstants.CowField getRandomCowField() {
-        boolean fieldChoice = randomGen.nextBoolean();
-
-        if (fieldChoice) {
-            return CowConstants.CowField.WEST;
-        }
-        else {
-            return CowConstants.CowField.EAST;
-        }
     }
 }

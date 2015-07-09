@@ -82,11 +82,10 @@ public class EmailManager {
         }
     }
 
-    public int getTimeTilNextEmail() {
+    public long getTimeTilNextEmail() {
         long nextEmailTime = lastEmailTime + emailFrequency * 60 * 1000;
         long timeLeftMillis = nextEmailTime - System.currentTimeMillis();
-        int timeLeftSecs = (int)Math.floor(timeLeftMillis / 1000);
 
-        return timeLeftSecs;
+        return timeLeftMillis;
     }
 }
